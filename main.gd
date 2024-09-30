@@ -1,6 +1,5 @@
 extends Control
 
-# Constants
 const GRID_SIZE: int = 10
 const CELL_SIZE: int = 50
 const COLORS: Array = [
@@ -14,31 +13,26 @@ const COLORS: Array = [
 ]
 const INITIAL_PIECE_COUNT: int = 5
 
-# Variables
-var grid: Array = [] # Stores the grid cells
-var light_pieces: Array = [] # Stores draggable light pieces
-var dragging_piece: TextureRect = null # Reference to the piece currently being dragged
-var original_position: Vector2 # Stores the original position of the dragging piece
-var backlight_on: bool = false # Tracks the backlight state
+var grid: Array = []
+var light_pieces: Array = []
+var dragging_piece: TextureRect = null
+var original_position: Vector2
+var backlight_on: bool = false
 var placed_lights: int = 0
 var max_backlight_intensity: float = 1.0
 var move_history: Array = []
 var piece_counts: Dictionary = {}
-var piece_count_labels: Dictionary = {}
 
-# UI Elements
-var backlight_button: Button
-var undo_button: Button
-var reset_button: Button
-
-# New variables for transitions and highlighting
+var ui_manager: Node
 var highlighted_cell: ColorRect = null
 
-# Audio players
 var ambient_player: AudioStreamPlayer
 var place_sound: AudioStreamPlayer
 
 func _ready() -> void:
+	ui_manager = preload("res://ui_manager.gd").new()
+	add_child(ui_manager)
+
 	var main_container = HBoxContainer.new()
 	main_container.size = get_viewport_rect().size
 	add_child(main_container)
@@ -50,13 +44,26 @@ func _ready() -> void:
 	main_container.add_child(right_container)
 
 	_initialize_light_pieces(right_container)
-	_initialize_ui(right_container)
+	ui_manager.initialize_ui(right_container)
 	_update_all_glows()
 	_initialize_audio()
 	_add_particle_effects()
 
+	ui_manager.connect("backlight_toggled", Callable(self, "_on_backlight_toggled"))
+	ui_manager.connect("undo_pressed", Callable(self, "_on_undo_pressed"))
+	ui_manager.connect("reset_pressed", Callable(self, "_on_reset_pressed"))
+	ui_manager.connect("theme_button_pressed", Callable(self, "_on_theme_button_pressed"))
+	ui_manager.connect("save_pressed", Callable(self, "_save_arrangement"))
+	ui_manager.connect("load_pressed", Callable(self, "_load_arrangement"))
+
 func _process(delta: float) -> void:
 	_update_background_ambiance(Time.get_ticks_msec() / 1000.0)
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		_process_mouse_button_event(event)
+	elif event is InputEventMouseMotion:
+		_process_mouse_motion_event(event)
 
 func _initialize_grid() -> Control:
 	var grid_container = GridContainer.new()
@@ -82,8 +89,8 @@ func _initialize_grid() -> Control:
 func _create_grid_cell() -> ColorRect:
 	var cell = ColorRect.new()
 	cell.custom_minimum_size = Vector2(CELL_SIZE, CELL_SIZE)
-	cell.color = Color(0.1, 0.1, 0.1) # Initial dim color
-	cell.mouse_filter = Control.MOUSE_FILTER_PASS # Allow input to pass through
+	cell.color = Color(0.1, 0.1, 0.1)
+	cell.mouse_filter = Control.MOUSE_FILTER_PASS
 	return cell
 
 func _initialize_light_pieces(container: Control) -> void:
@@ -98,10 +105,10 @@ func _initialize_light_pieces(container: Control) -> void:
 		hbox.add_child(piece)
 		light_pieces.append(piece)
 
-		var count_label = _create_piece_count_label(hbox)
+		var count_label = ui_manager.create_piece_count_label(hbox)
 
 		piece_counts[color] = INITIAL_PIECE_COUNT
-		piece_count_labels[color] = count_label
+		ui_manager.update_piece_count(color, INITIAL_PIECE_COUNT)
 
 func _create_light_piece(color: Color) -> TextureRect:
 	var piece = TextureRect.new()
@@ -112,32 +119,9 @@ func _create_light_piece(color: Color) -> TextureRect:
 	piece.mouse_filter = Control.MOUSE_FILTER_STOP
 	return piece
 
-func _create_piece_count_label(container: HBoxContainer) -> Label:
-	var count_label = Label.new()
-	count_label.text = str(INITIAL_PIECE_COUNT)
-	container.add_child(count_label)
-	return count_label
-
-func _initialize_ui(container: Control) -> void:
-	backlight_button = _create_ui_button("Backlight: Off", "_on_backlight_toggled")
-	undo_button = _create_ui_button("Undo", "_on_undo_pressed")
-	reset_button = _create_ui_button("Reset", "_on_reset_pressed")
-	
-	container.add_child(backlight_button)
-	container.add_child(undo_button)
-	container.add_child(reset_button)
-	_add_theme_button(container)
-	_add_save_load_buttons(container)
-
-func _create_ui_button(text: String, callback: String) -> Button:
-	var button = Button.new()
-	button.text = text
-	button.connect("pressed", Callable(self, callback))
-	return button
-
 func _create_circle_texture(color: Color) -> ImageTexture:
 	var image = Image.create(CELL_SIZE, CELL_SIZE, false, Image.FORMAT_RGBA8)
-	image.fill(Color(0, 0, 0, 0)) # Transparent background
+	image.fill(Color(0, 0, 0, 0))
 	
 	for x in range(CELL_SIZE):
 		for y in range(CELL_SIZE):
@@ -147,12 +131,6 @@ func _create_circle_texture(color: Color) -> ImageTexture:
 	
 	return ImageTexture.create_from_image(image)
 
-func _input(event: InputEvent) -> void:
-	if event is InputEventMouseButton:
-		_process_mouse_button_event(event)
-	elif event is InputEventMouseMotion:
-		_process_mouse_motion_event(event)
-
 func _process_mouse_button_event(event: InputEventMouseButton) -> void:
 	if event.pressed and dragging_piece == null:
 		_start_drag(event.position)
@@ -161,10 +139,8 @@ func _process_mouse_button_event(event: InputEventMouseButton) -> void:
 
 func _process_mouse_motion_event(event: InputEventMouseMotion) -> void:
 	if dragging_piece != null:
-		# Make the piece follow the mouse cursor exactly
 		dragging_piece.global_position = event.global_position - dragging_piece.size / 2
 		
-		# Get the cell under the cursor for highlighting
 		var cell = _get_cell_at_position(event.global_position)
 		_update_grid_highlighting(cell)
 
@@ -200,7 +176,6 @@ func _start_drag(position: Vector2) -> void:
 				add_child(dragging_piece)
 				dragging_piece.global_position = position - dragging_piece.size / 2
 				original_position = piece.global_position
-				# Don't decrease the count here, do it when successfully placed
 			break
 
 func _end_drag() -> void:
@@ -210,11 +185,11 @@ func _end_drag() -> void:
 			var snapped_position = cell.global_position + (cell.size - dragging_piece.size) / 2
 			dragging_piece.global_position = snapped_position
 			_place_piece(cell, dragging_piece)
-			_provide_feedback("Light placed. Let it shine!")
+			ui_manager.provide_feedback("Light placed. Let it shine!")
 			_play_place_sound()
 		else:
 			_return_piece(dragging_piece)
-			_provide_feedback("This spot is already illuminated. Try another!", true)
+			ui_manager.provide_feedback("This spot is already illuminated. Try another!", true)
 		
 		dragging_piece.queue_free()
 		dragging_piece = null
@@ -243,7 +218,7 @@ func _return_piece(piece: TextureRect) -> void:
 
 func _update_piece_count(color: Color, delta: int) -> void:
 	piece_counts[color] += delta
-	piece_count_labels[color].text = str(piece_counts[color])
+	ui_manager.update_piece_count(color, piece_counts[color])
 
 func _animate_place_light(piece: TextureRect) -> void:
 	var tween = create_tween()
@@ -258,7 +233,6 @@ func _animate_return_piece(piece: TextureRect) -> void:
 
 func _on_backlight_toggled() -> void:
 	backlight_on = !backlight_on
-	backlight_button.text = "Backlight: " + ("On" if backlight_on else "Off")
 	_update_all_glows()
 
 func _update_all_glows() -> void:
@@ -302,7 +276,7 @@ func _on_undo_pressed() -> void:
 		placed_lights -= 1
 		_update_piece_count(last_move["color"], 1)
 		_update_all_glows()
-		_provide_feedback("Step back taken. Feel free to try again!")
+		ui_manager.provide_feedback("Step back taken. Feel free to try again!")
 
 func _on_reset_pressed() -> void:
 	for row in grid:
@@ -314,23 +288,9 @@ func _on_reset_pressed() -> void:
 	move_history.clear()
 	for color in COLORS:
 		piece_counts[color] = INITIAL_PIECE_COUNT
-		piece_count_labels[color].text = str(INITIAL_PIECE_COUNT)
+		ui_manager.update_piece_count(color, INITIAL_PIECE_COUNT)
 	_update_all_glows()
-	_provide_feedback("Canvas cleared. Time for a fresh start!")
-
-func _provide_feedback(message: String, is_error: bool = false) -> void:
-	var feedback_label = Label.new()
-	feedback_label.text = message
-	feedback_label.modulate = Color(0.9, 0.9, 1.0) if not is_error else Color(1.0, 0.8, 0.8)
-	add_child(feedback_label)
-	feedback_label.position = Vector2(10, get_viewport_rect().size.y - 40)
-	
-	var tween = create_tween()
-	tween.tween_property(feedback_label, "modulate:a", 0, 2)
-	tween.tween_callback(feedback_label.queue_free)
-
-func _tween_property(target: Object, property: String, value: Variant, duration: float) -> void:
-	create_tween().tween_property(target, property, value, duration)
+	ui_manager.provide_feedback("Canvas cleared. Time for a fresh start!")
 
 func _create_organic_glow_texture(color: Color, size: int) -> ImageTexture:
 	var image = Image.create(size, size, false, Image.FORMAT_RGBA8)
@@ -400,19 +360,7 @@ func _play_place_sound() -> void:
 		print("Place sound effect played")  # Fallback for debugging
 
 func _on_theme_button_pressed() -> void:
-	var themes = [
-		"Create a sunset scene",
-		"Design a starry night",
-		"Craft a soothing forest glade",
-		"Build a cozy campfire",
-		"Paint a serene ocean view"
-	]
-	var random_theme = themes[randi() % themes.size()]
-	_provide_feedback("Theme idea: " + random_theme)
-
-func _add_theme_button(container: Control) -> void:
-	var theme_button = _create_ui_button("Get Theme Idea", "_on_theme_button_pressed")
-	container.add_child(theme_button)
+	ui_manager.show_random_theme()
 
 func _blend_adjacent_colors() -> void:
 	for y in range(GRID_SIZE):
@@ -451,7 +399,7 @@ func _save_arrangement() -> void:
 	var file = FileAccess.open("user://light_arrangement.save", FileAccess.WRITE)
 	file.store_var(save_data)
 	file.close()
-	_provide_feedback("Light arrangement saved!")
+	ui_manager.provide_feedback("Light arrangement saved!")
 
 func _load_arrangement() -> void:
 	if FileAccess.file_exists("user://light_arrangement.save"):
@@ -467,12 +415,6 @@ func _load_arrangement() -> void:
 			_place_piece(cell, piece)
 		
 		_update_all_glows()
-		_provide_feedback("Light arrangement loaded!")
+		ui_manager.provide_feedback("Light arrangement loaded!")
 	else:
-		_provide_feedback("No saved arrangement found.", true)
-
-func _add_save_load_buttons(container: Control) -> void:
-	var save_button = _create_ui_button("Save Arrangement", "_save_arrangement")
-	var load_button = _create_ui_button("Load Arrangement", "_load_arrangement")
-	container.add_child(save_button)
-	container.add_child(load_button)
+		ui_manager.provide_feedback("No saved arrangement found.", true)
