@@ -1,6 +1,6 @@
 # Interactive Zen Light Game
 # from Zephyrus @ Inchworm Games
-# Inspired by his life partner who impulse bought a light brite to bring joy to our neighbors.
+# Inspired by his life partner who impulse bought a light brite to bring joy to their neighbors.
 
 This is a Godot project that creates an interactive grid where users can place colored lights to create patterns and ambiance. It features:
 
