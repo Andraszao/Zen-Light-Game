@@ -27,7 +27,7 @@ This is a Godot project that creates an interactive grid where users can place c
 ## How to Run
 
 1. **Download Godot Engine:**  [Download Godot](https://godotengine.org/download)
-2. **Clone the repository:** `git clone https://github.com/your-username/interactive-light-grid.git`
+2. **Clone the repository:** `git clone https://github.com/Andraszao/Zen-Light-Game
 3. **Open the project in Godot.**
 4. **Run the scene.**
 
